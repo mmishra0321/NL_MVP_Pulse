@@ -1,20 +1,20 @@
-name: Reset Radar weekly detection
+name: Pulse weekly detection
 
 # Per architecture.md sections 6 + 10. Runs the proactive cron that makes
-# Reset Radar a system-initiated companion rather than a settings page.
+# Pulse a system-initiated companion rather than a settings page.
 #
 # Schedule (architecture spec): every Monday at 09:00 UTC = 14:30 IST.
 # Also dispatchable on-demand from the Actions tab for manual triggers.
 #
 # Required repo secrets (set in Settings -> Secrets and variables -> Actions):
-#   RESET_RADAR_API_URL    e.g. https://reset-radar.onrender.com
-#                          (when missing, the run no-ops with a warning so
-#                           the workflow file itself is always green-able)
-#   RESET_RADAR_API_TOKEN  shared secret matching backend's JOBS_API_TOKEN
-#                          env var. When the backend leaves JOBS_API_TOKEN
-#                          empty (the local-dev / single-tenant default),
-#                          this secret can also be empty and the call
-#                          succeeds unauthenticated.
+#   PULSE_API_URL    e.g. https://nlmvppulse-production.up.railway.app
+#                    (when missing, the run no-ops with a warning so the
+#                     workflow file itself is always green-able)
+#   PULSE_API_TOKEN  shared secret matching backend's JOBS_API_TOKEN env
+#                    var. When the backend leaves JOBS_API_TOKEN empty
+#                    (the local-dev / single-tenant default), this secret
+#                    can also be empty and the call succeeds
+#                    unauthenticated.
 
 on:
   schedule:
@@ -42,10 +42,10 @@ jobs:
       - name: Verify backend URL is configured
         id: check_url
         env:
-          API_URL: ${{ secrets.RESET_RADAR_API_URL }}
+          API_URL: ${{ secrets.PULSE_API_URL }}
         run: |
           if [ -z "$API_URL" ]; then
-            echo "::warning::RESET_RADAR_API_URL secret is not set; skipping (configure it once the backend is deployed in R7)."
+            echo "::warning::PULSE_API_URL secret is not set; skipping (add it under Settings -> Secrets and variables -> Actions)."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -55,8 +55,8 @@ jobs:
         id: call
         if: steps.check_url.outputs.skip == 'false'
         env:
-          API_URL:   ${{ secrets.RESET_RADAR_API_URL }}
-          API_TOKEN: ${{ secrets.RESET_RADAR_API_TOKEN }}
+          API_URL:   ${{ secrets.PULSE_API_URL }}
+          API_TOKEN: ${{ secrets.PULSE_API_TOKEN }}
           DRY_RUN:   ${{ github.event.inputs.dry_run || 'false' }}
         run: |
           set -euo pipefail
@@ -66,7 +66,7 @@ jobs:
             AUTH_HEADER=(-H "Authorization: Bearer $API_TOKEN")
           else
             AUTH_HEADER=()
-            echo "::notice::RESET_RADAR_API_TOKEN is empty; calling unauthenticated."
+            echo "::notice::PULSE_API_TOKEN is empty; calling unauthenticated."
           fi
 
           HTTP_STATUS=$(curl --silent --show-error --output response.json --write-out "%{http_code}" \
@@ -101,7 +101,7 @@ jobs:
           path = os.environ.get("GITHUB_STEP_SUMMARY")
           if path:
               with open(path, "a") as f:
-                  f.write("# Reset Radar weekly detection\n\n```\n" + summary + "```\n")
+                  f.write("# Pulse weekly detection\n\n```\n" + summary + "```\n")
           print(summary)
           PY
 

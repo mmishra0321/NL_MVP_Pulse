@@ -1,5 +1,9 @@
 # 02-mvp · Pulse
 
+[![SPA](https://img.shields.io/badge/react%20SPA-live-1DB954?logo=vercel&logoColor=white&labelColor=191414)](https://nl-mvp-pulse.vercel.app/)
+[![API](https://img.shields.io/badge/API-live-1DB954?logo=fastapi&logoColor=white&labelColor=191414)](https://nlmvppulse-production.up.railway.app/health)
+[![Weekly cron](https://github.com/mmishra0321/NL_MVP_Pulse/actions/workflows/weekly-detection.yml/badge.svg)](https://github.com/mmishra0321/NL_MVP_Pulse/actions/workflows/weekly-detection.yml)
+
 > **Pulse** is a mobile-first, sandboxed reset that lives inside
 > the Spotify UI. When our detection engine sees a Premium
 > listener's diversity collapse along one axis (genre / language
@@ -22,26 +26,37 @@
 
 ---
 
-## Status (2026-07-04, post-rebrand)
+## Live surfaces
 
-We are at the **end of P0**: docs rewritten, mockups saved,
-folder pruned. The React frontend still renders the old
-Reset-Radar desktop UI — that gets rebuilt mobile-first across
-P1 → P4. The FastAPI backend stays largely as-is; P5 adds the
-sandbox-lifecycle endpoints (per-track remove, outcome).
+Both surfaces auto-redeploy on every push to `main`; open the SPA on a phone-sized viewport (or DevTools Device Toolbar → iPhone 13 Pro) for the intended mobile experience.
+
+| Surface | URL | Host | Purpose |
+|---|---|---|---|
+| **React SPA** (primary) | [`nl-mvp-pulse.vercel.app`](https://nl-mvp-pulse.vercel.app/) | Vercel | The full Pulse mobile flow — persona picker → nudge → sandbox → now-playing → keep/revert |
+| **FastAPI backend** | [`/health`](https://nlmvppulse-production.up.railway.app/health) · [`/users`](https://nlmvppulse-production.up.railway.app/users) | Railway | Serves personas, runs stuck-detection, hosts the reset lifecycle API |
+| **Weekly cron** | [Actions](https://github.com/mmishra0321/NL_MVP_Pulse/actions/workflows/weekly-detection.yml) | GitHub Actions | Mondays 09:00 UTC → appends one weekly snapshot per persona and re-runs detection |
+
+> The demo runs entirely against synthetic data (`MOCK_MODE=true`). No Spotify OAuth, no user login — just pick a persona and walk the flow. Every page refresh resets the demo cleanly by design (see §5.6 of `doc/architecture.md`).
+
+---
+
+## Status (2026-07-04, post-deploy)
+
+All six phases are shipped and live. Pulse is a working, deployable, three-persona demo end-to-end.
 
 | Phase | Status |
 |---|---|
-| **P0** Rebrand + docs + prune | ✅ this session |
-| **P0.5** Mock data + eligibility gate (Aanya + Karthik + **Riya control**) | ✅ this session |
-| **P1** Mobile shell + Home nudge (screen 1) | pending |
-| **P2** Sandbox Playlist (screen 2) | pending |
-| **P3** Now Playing (screen 3) | pending |
-| **P4** Keep or Revert outcome (screen 4) | pending |
-| **P5** Sandbox lifecycle endpoints (backend) | pending |
-| **P6** Public deployment + deck link-in | pending |
+| **P0** Rebrand + docs + prune | ✅ Reset Radar → Pulse across every file, folder pruned to `backend/ frontend/ doc/` |
+| **P0.5** Mock data + eligibility gate (Aanya + Karthik + **Riya control**) | ✅ Riya's Free-tier / 2-month-tenure gate proves the negative |
+| **P1** Mobile shell + Home nudge (screen 1) | ✅ 375×812 shell, `SpotifyBrandBar`, `PulseNudgeCard`, `DiversityScoreCard` |
+| **P2** Sandbox Playlist (screen 2) | ✅ Shimmer skeleton, 5-track default, sticky nav, kebab attention pulse |
+| **P3** Now Playing (screen 3) | ✅ Left-chevron back, `TrackActionSheet` kebab, right-sized play control |
+| **P4** Keep or Revert outcome (screen 4) | ✅ Before/after diversity, projected vs. measured after-score |
+| **P5** Sandbox lifecycle endpoints (backend) | ✅ Per-track soft-delete, cached outcome, sandbox play polling |
+| **P5.5** Save / Keep / Discard + Library | ✅ Session-local `SavedSandboxContext`, `LibraryPage`, `SavedConfirmationPage`, follow-up nudges |
+| **P6** Public deployment + deck link-in | ✅ Railway backend + Vercel SPA + GitHub Actions weekly cron |
 
-Full details in [`doc/implementationPlan.md`](doc/implementationPlan.md).
+Full per-task tables in [`doc/implementationPlan.md`](doc/implementationPlan.md).
 
 ---
 
@@ -157,6 +172,51 @@ so both processes need to be running for end-to-end calls.
 
 ---
 
+## Deploy — how the live surfaces are wired
+
+Same two-service pattern as [`01-ai-review-engine`](../01-ai-review-engine/):
+FastAPI on Railway, Vite/React on Vercel, both auto-redeploying on every
+push to `main`. Reproducing the deploy takes ~15 min end-to-end.
+
+### 1 · Railway (FastAPI backend)
+
+1. https://railway.app → **New Project → Deploy from GitHub repo** →
+   pick this repo
+2. Service **Settings**
+   - **Root Directory:** `backend` *(critical — the Procfile /
+     railway.json / runtime.txt all live inside `backend/`)*
+   - **Health Check Path:** `/health`
+   - Memory Limit: default 512 MB (this backend has no ML deps)
+3. Service **Variables**
+   - `GROQ_API_KEY = gsk_...`
+   - `MOCK_MODE = true` *(default; keeps the demo Spotify-free)*
+   - `SESSION_SECRET_KEY = <python -c "import secrets;print(secrets.token_urlsafe(48))">`
+   - `FRONTEND_ORIGIN = https://nl-mvp-pulse.vercel.app` *(match your Vercel URL)*
+4. **Settings → Networking → Generate Domain** → smoke-test
+   [`/health`](https://nlmvppulse-production.up.railway.app/health)
+
+### 2 · Vercel (React SPA)
+
+1. https://vercel.com → **Add New → Project → Import** → pick this repo
+2. Configure Project
+   - **Root Directory:** `frontend` *(critical — Vercel defaults to
+     repo root)*
+   - **Framework Preset:** Vite *(auto-detected)*
+   - **Environment Variable:** `VITE_API_BASE = <your Railway URL>`
+3. Deploy → smoke-test on a phone-sized viewport
+
+`frontend/vercel.json` handles the SPA rewrite so React Router paths
+(`/library`, `/sandbox/:id`, `/sandbox/:id/now-playing/:trackId`, etc.)
+survive a hard refresh.
+
+### 3 · GitHub Actions (weekly cron)
+
+Set `PULSE_API_URL` under Settings → Secrets and variables → Actions →
+Secrets (see the [Weekly GitHub Action](#weekly-github-action) section
+below).
+
+---
+
 ## Mock mode (`MOCK_MODE=true`) — the default for the deck demo
 
 Pulse's live demo runs entirely against synthetic data. There is
@@ -260,13 +320,25 @@ Neither route is linked from the mobile home. See
 
 ## Weekly GitHub Action
 
-`.github/workflows/weekly-detection.yml` fires Mondays 09:00 UTC
-against `POST $RESET_RADAR_API_URL/jobs/run-detection`. Set two
-repo secrets when you deploy:
+[`.github/workflows/weekly-detection.yml`](.github/workflows/weekly-detection.yml)
+fires **Mondays 09:00 UTC (14:30 IST)** against
+`POST $PULSE_API_URL/jobs/run-detection`, which:
 
-- `RESET_RADAR_API_URL` — e.g. `https://pulse-mvp.onrender.com`
-- `RESET_RADAR_API_TOKEN` — optional; empty unless
-  `JOBS_API_TOKEN` on the backend is set to the same value
+1. Fetches every persona's latest weekly snapshot
+2. Recomputes stuck-scores across the 4 axes (genre / language / era / mood)
+3. Fires a new nudge if the 3-week streak rule + eligibility gate both pass
+4. Uploads the response JSON as a build artefact (30-day retention)
+
+Two repo secrets need to be set once (Settings → Secrets and variables → Actions):
+
+| Secret | Value | Required? |
+|---|---|---|
+| `PULSE_API_URL` | `https://nlmvppulse-production.up.railway.app` | ✅ Yes |
+| `PULSE_API_TOKEN` | shared secret matching backend's `JOBS_API_TOKEN` env var | ❌ Optional — leave empty for the single-tenant demo |
+
+You can also trigger the workflow on-demand from the Actions tab
+(`workflow_dispatch`) with an optional `dry_run=true` input for
+verification without persisting snapshots.
 
 See [`doc/architecture.md`](doc/architecture.md) §9 for what runs
 each Monday.
@@ -291,3 +363,11 @@ out on deck slide 9 (frames) and slide 11 (future scope).
 - **Project-wide architecture:** [`../masterArchitecture.md`](../masterArchitecture.md)
 - **User research:** [`../03-research-and-deck/`](../03-research-and-deck/)
 - **AI Review Engine (P1):** [`../01-ai-review-engine/`](../01-ai-review-engine/)
+
+---
+
+**Live surfaces (all auto-redeploy on every push to `main`):**
+
+- React SPA on Vercel — [`nl-mvp-pulse.vercel.app`](https://nl-mvp-pulse.vercel.app/)
+- FastAPI backend on Railway — [`.../health`](https://nlmvppulse-production.up.railway.app/health)
+- Weekly cron — [GitHub Actions](https://github.com/mmishra0321/NL_MVP_Pulse/actions/workflows/weekly-detection.yml)
