@@ -16,8 +16,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db import init_db
+from app.db import db_session, init_db
+from app.models import WeeklySnapshot
 from app.routes import auth, dashboard, jobs, nudges, reset
+from app.routes.jobs import run_weekly_detection
 
 
 logging.basicConfig(
@@ -72,14 +74,57 @@ app.include_router(reset.router, prefix="/reset", tags=["reset"])
 app.include_router(dashboard.router, tags=["dashboard"])           # /users and /scores/history at the root
 
 
+def _auto_seed_mock_demo() -> None:
+    """Bootstrap the demo DB from the synthetic fixture on first boot.
+
+    Motivation: Railway's filesystem is ephemeral, so every redeploy
+    resets `reset_radar.db` to zero rows. Without this hook the SPA
+    lands on a healthy backend that has no snapshots, no scores, and
+    no nudges, and the persona picker just falls through to a blank
+    home. This runs the same code path as `POST /jobs/run-detection`
+    against `mock_data/synthetic_weeks.json`, but only when:
+
+      * MOCK_MODE=true (the demo default), AND
+      * WeeklySnapshot is currently empty (so we don't clobber a real
+        run mid-flight if someone hits `/jobs/run-detection` first).
+
+    Any failure is logged and swallowed. A silent seed miss is better
+    than blocking uvicorn from binding to `$PORT` on Railway.
+    """
+    if not settings.mock_mode:
+        return
+    try:
+        with db_session() as db:
+            if db.query(WeeklySnapshot).first() is not None:
+                log.info("auto-seed: DB already has snapshots, skipping.")
+                return
+    except Exception as exc:                                          # noqa: BLE001
+        log.warning("auto-seed: could not inspect DB, skipping (%s).", exc)
+        return
+
+    try:
+        summary = run_weekly_detection(dry_run=False,
+                                       trigger_source="startup_seed")
+        log.info(
+            "auto-seed: seeded mock demo | users=%s snapshots=%s scores=%s nudges=%s",
+            summary.get("users_processed"),
+            summary.get("snapshots_created"),
+            summary.get("scores_computed"),
+            summary.get("nudges_fired"),
+        )
+    except Exception as exc:                                          # noqa: BLE001
+        log.error("auto-seed: run_weekly_detection failed (%s).", exc)
+
+
 @app.on_event("startup")
 def _on_startup() -> None:
     log.info(
-        "Reset Radar starting up | mock_mode=%s | db=%s",
+        "Pulse starting up | mock_mode=%s | db=%s",
         settings.mock_mode,
         settings.database_url,
     )
     init_db()
+    _auto_seed_mock_demo()
 
 
 @app.get("/health", tags=["meta"])
