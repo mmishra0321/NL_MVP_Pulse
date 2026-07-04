@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pulse — Screen 3</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a0a; display:flex; justify-content:center; align-items:center; min-height:100vh; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; padding:40px; }
+.phone { width:375px; height:812px; background:#000; border-radius:44px; overflow:hidden; border:8px solid #1c1c1e; box-shadow:0 40px 80px rgba(0,0,0,0.8); display:flex; flex-direction:column; position:relative; }
+.status-bar { background:#000; padding:16px 24px 0; display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+.time { color:#fff; font-size:15px; font-weight:600; }
+.status-icons { display:flex; gap:6px; align-items:center; }
+.nav-row { padding:10px 20px 0; display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+.now-label { text-align:center; }
+.now-from { color:#B3B3B3; font-size:10px; font-weight:600; letter-spacing:1px; margin:0; }
+.now-playlist { color:#fff; font-size:13px; font-weight:700; margin:2px 0 0; }
+.cover-wrap { padding:20px 28px 14px; display:flex; justify-content:center; flex-shrink:0; }
+.cover-art { width:280px; height:280px; border-radius:12px; background:linear-gradient(145deg,#1DB954,#0a3d1f); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; }
+.cover-art .wordmark { color:#fff; font-size:30px; font-weight:800; letter-spacing:1px; }
+.cover-art .sub { color:rgba(255,255,255,0.55); font-size:12px; letter-spacing:.5px; }
+.track-row { padding:0 28px; display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-shrink:0; }
+.track-name { color:#fff; font-size:21px; font-weight:800; margin:0 0 3px; }
+.track-artist { color:#B3B3B3; font-size:14px; }
+.progress-wrap { padding:0 28px; margin-bottom:14px; flex-shrink:0; }
+.progress-bar { height:4px; background:#333; border-radius:2px; margin-bottom:6px; position:relative; }
+.progress-fill { height:4px; width:38%; background:#fff; border-radius:2px; }
+.progress-thumb { width:12px; height:12px; background:#fff; border-radius:50%; position:absolute; top:-4px; left:37%; }
+.progress-times { display:flex; justify-content:space-between; }
+.progress-times span { color:#B3B3B3; font-size:11px; }
+.controls { padding:0 22px; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-shrink:0; }
+.play-btn { width:60px; height:60px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+.shuffle-wrap { position:relative; }
+.shuffle-dot { width:4px; height:4px; background:#1DB954; border-radius:50%; position:absolute; bottom:-7px; left:50%; transform:translateX(-50%); }
+.device-row { padding:0 28px 10px; display:flex; justify-content:center; align-items:center; gap:7px; flex-shrink:0; }
+.device-row span { color:#B3B3B3; font-size:12px; }
+.coach-mark { margin:0 12px; background:#181818; border-radius:10px; padding:10px 14px; border:1px solid #333; position:relative; flex-shrink:0; }
+.coach-arrow { position:absolute; bottom:-7px; right:50px; width:12px; height:12px; background:#181818; border-bottom:1px solid #333; border-right:1px solid #333; transform:rotate(45deg); }
+.coach-text { color:#fff; font-size:10px; line-height:1.4; margin-bottom:3px; }
+.coach-close { color:#B3B3B3; font-size:10px; }
+.spacer { flex:1; }
+.pulse-ribbon { background:#0F5C2E; padding:12px 18px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.ribbon-left { display:flex; align-items:center; gap:7px; }
+.ribbon-dot { width:8px; height:8px; border-radius:50%; background:#1DB954; }
+.ribbon-label { color:#fff; font-size:13px; font-weight:700; }
+.ribbon-center { color:rgba(255,255,255,0.6); font-size:12px; }
+.ribbon-btn { background:#1DB954; color:#000; border:none; padding:7px 14px; border-radius:16px; font-size:12px; font-weight:800; }
+.overlay { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.65); z-index:10; }
+.bottom-sheet { position:absolute; bottom:0; left:0; right:0; background:#1a1a1a; border-radius:20px 20px 0 0; padding:0 0 16px; z-index:11; }
+.drag-handle-wrap { display:flex; justify-content:center; padding:10px 0 6px; }
+.drag-handle { width:36px; height:4px; background:#444; border-radius:2px; }
+.sheet-track { display:flex; align-items:center; gap:12px; padding:10px 20px 14px; border-bottom:0.5px solid #2A2A2A; }
+.sheet-art { width:44px; height:44px; border-radius:6px; background:linear-gradient(135deg,#3a1a1a,#8a2d2d); }
+.sheet-option { display:flex; align-items:center; gap:14px; padding:13px 20px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="status-bar"><span class="time">9:41</span><div class="status-icons"><svg width="17" height="12" viewBox="0 0 16 11" fill="white"><rect x="0" y="4" width="3" height="7" rx="1"/><rect x="4.5" y="2.5" width="3" height="8.5" rx="1"/><rect x="9" y="0" width="3" height="11" rx="1"/><rect x="13.5" y="0" width="2.5" height="11" rx="1" opacity="0.3"/></svg><svg width="16" height="12" viewBox="0 0 15 11" fill="white"><path d="M7.5 2.2C5 2.2 2.8 3.2 1.2 4.9L0 3.7C2 1.4 4.6 0 7.5 0s5.5 1.4 7.5 3.7l-1.2 1.2C12.2 3.2 10 2.2 7.5 2.2z"/><path d="M7.5 5.5c-1.5 0-2.9.6-3.9 1.6L2.4 5.9C3.7 4.6 5.5 3.8 7.5 3.8s3.8.8 5.1 2.1l-1.2 1.2C10.4 6.1 9 5.5 7.5 5.5z"/><circle cx="7.5" cy="9.5" r="1.5"/></svg><svg width="26" height="13" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3.5" stroke="white" stroke-opacity="0.35"/><rect x="1" y="1" width="15" height="10" rx="3" fill="white"/><path d="M22 4v4a2 2 0 000-4z" fill="white" opacity="0.4"/></svg></div></div>
+  <div class="nav-row"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg><div class="now-label"><p class="now-from">PLAYING FROM PLAYLIST</p><p class="now-playlist">Your Pulse Reset</p></div><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></div>
+  <div class="cover-wrap"><div class="cover-art"><span class="wordmark">Pulse</span><span class="sub">reset · language</span></div></div>
+  <div class="track-row"><div><p class="track-name">Munbe Vaa</p><p class="track-artist">A.R. Rahman</p></div><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>
+  <div class="progress-wrap"><div class="progress-bar"><div class="progress-fill"></div><div class="progress-thumb"></div></div><div class="progress-times"><span>1:24</span><span>3:47</span></div></div>
+  <div class="controls">
+    <div class="shuffle-wrap"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.8"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg><div class="shuffle-dot"></div></div>
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+    <div class="play-btn"><svg width="26" height="26" viewBox="0 0 24 24" fill="#000"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></div>
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.8"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+  </div>
+  <div class="device-row"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>This iPhone</span></div>
+  <div class="coach-mark"><div class="coach-arrow"></div><p class="coach-text">Tap the 3 dots at the top to remove a track or see more options for any song in this sandbox.</p><span class="coach-close">Got it</span></div>
+  <div class="spacer"></div>
+  <div class="pulse-ribbon"><div class="ribbon-left"><div class="ribbon-dot"></div><span class="ribbon-label">Pulse Sandbox</span></div><span class="ribbon-center">8 days left</span><button class="ribbon-btn">Keep or Revert</button></div>
+  <div class="overlay"></div>
+  <div class="bottom-sheet">
+    <div class="drag-handle-wrap"><div class="drag-handle"></div></div>
+    <div class="sheet-track"><div class="sheet-art"></div><div><p style="color:#fff;font-size:14px;font-weight:700;margin:0">Munbe Vaa</p><p style="color:#B3B3B3;font-size:12px;margin:3px 0 0">A.R. Rahman</p></div></div>
+    <div class="sheet-option" style="background:rgba(226,33,52,0.08)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E22134" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><span style="color:#E22134;font-size:14px;font-weight:700">Remove from this reset</span></div>
+    <div class="sheet-option"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="color:#fff;font-size:14px">Add to playlist</span></div>
+    <div class="sheet-option"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span style="color:#fff;font-size:14px">Share</span></div>
+    <div class="sheet-option"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span style="color:#fff;font-size:14px">Go to artist</span></div>
+  </div>
+</div>
+</body>
+</html>

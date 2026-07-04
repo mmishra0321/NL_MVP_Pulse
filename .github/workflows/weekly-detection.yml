@@ -1,0 +1,115 @@
+name: Reset Radar weekly detection
+
+# Per architecture.md sections 6 + 10. Runs the proactive cron that makes
+# Reset Radar a system-initiated companion rather than a settings page.
+#
+# Schedule (architecture spec): every Monday at 09:00 UTC = 14:30 IST.
+# Also dispatchable on-demand from the Actions tab for manual triggers.
+#
+# Required repo secrets (set in Settings -> Secrets and variables -> Actions):
+#   RESET_RADAR_API_URL    e.g. https://reset-radar.onrender.com
+#                          (when missing, the run no-ops with a warning so
+#                           the workflow file itself is always green-able)
+#   RESET_RADAR_API_TOKEN  shared secret matching backend's JOBS_API_TOKEN
+#                          env var. When the backend leaves JOBS_API_TOKEN
+#                          empty (the local-dev / single-tenant default),
+#                          this secret can also be empty and the call
+#                          succeeds unauthenticated.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"            # Mondays 09:00 UTC, per architecture §10
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without persisting any snapshots / scores / nudges"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+jobs:
+  run-detection:
+    name: POST /jobs/run-detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify backend URL is configured
+        id: check_url
+        env:
+          API_URL: ${{ secrets.RESET_RADAR_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "::warning::RESET_RADAR_API_URL secret is not set; skipping (configure it once the backend is deployed in R7)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Call backend
+        id: call
+        if: steps.check_url.outputs.skip == 'false'
+        env:
+          API_URL:   ${{ secrets.RESET_RADAR_API_URL }}
+          API_TOKEN: ${{ secrets.RESET_RADAR_API_TOKEN }}
+          DRY_RUN:   ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # Build the auth header only when a token is configured.
+          if [ -n "$API_TOKEN" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer $API_TOKEN")
+          else
+            AUTH_HEADER=()
+            echo "::notice::RESET_RADAR_API_TOKEN is empty; calling unauthenticated."
+          fi
+
+          HTTP_STATUS=$(curl --silent --show-error --output response.json --write-out "%{http_code}" \
+            --max-time 480 \
+            -X POST "$API_URL/jobs/run-detection?dry_run=$DRY_RUN" \
+            "${AUTH_HEADER[@]}" \
+            -H "Content-Type: application/json")
+
+          echo "HTTP $HTTP_STATUS"
+          echo "--- response.json (first 4 KiB) ---"
+          head -c 4096 response.json || true
+          echo ""
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Backend returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Summarise the run
+        if: steps.check_url.outputs.skip == 'false' && always() && steps.call.outcome == 'success'
+        run: |
+          python3 - <<'PY'
+          import json, os
+          data = json.load(open("response.json"))
+          summary = (
+              f"Mode: {'real' if not data.get('mock_mode') else 'mock'}\n"
+              f"Users processed: {data.get('users_processed', 0)}\n"
+              f"Snapshots created: {data.get('snapshots_created', 0)}\n"
+              f"Stuck scores written: {data.get('scores_computed', 0)}\n"
+              f"Nudges fired: {data.get('nudges_fired', 0)}\n"
+          )
+          path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if path:
+              with open(path, "a") as f:
+                  f.write("# Reset Radar weekly detection\n\n```\n" + summary + "```\n")
+          print(summary)
+          PY
+
+      - name: Upload run artefact
+        if: steps.check_url.outputs.skip == 'false' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-detection-response-${{ github.run_id }}
+          path: response.json
+          retention-days: 30
+          if-no-files-found: warn

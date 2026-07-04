@@ -1,0 +1,678 @@
+"""Reset session endpoints - create, fetch, decide.
+
+R2 ships real `POST /reset/sessions` + `GET /reset/sessions/{id}`.
+R5 wires real Spotify writes: when MOCK_MODE=false, the create endpoint
+materialises a real playlist in the user's Spotify library, and the
+decide endpoint follows artists + saves tracks on "keep" or unfollows
+the playlist on "revert".
+"""
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import desc
+
+from app.config import settings
+from app.db import db_session
+from app.models import (
+    OutcomeArtistHit,
+    OutcomeRepeatPlay,
+    OutcomeTracksPlayed,
+    ResetDecisionIn,
+    ResetOutcomeDetailOut,
+    ResetOutcomeOut,
+    ResetSession,
+    ResetSessionIn,
+    ResetSessionOut,
+    ResetTrack,
+    ResetTrackOut,
+    ScopeDimension,
+    StuckScore,
+    User,
+)
+from app.reset_engine import generate_reset_playlist
+from app.spotify_client import (
+    SpotifyAuthError,
+    _ensure_fresh_token,
+    add_tracks_to_playlist,
+    create_playlist,
+    delete_playlist,
+    resolve_artist_ids_for_tracks,
+    save_to_library,
+)
+
+
+log = logging.getLogger("reset_radar.routes.reset")
+router = APIRouter()
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def _coerce_scope_list(values: list[str]) -> list[ScopeDimension]:
+    """Coerce stored JSON list back into typed ScopeDimensions for response."""
+    out: list[ScopeDimension] = []
+    for v in values:
+        if v in {"genre", "language", "era", "mood"}:
+            out.append(v)                                            # type: ignore[arg-type]
+    return out
+
+
+def _serialise_session(session: ResetSession) -> ResetSessionOut:
+    """SQLAlchemy ResetSession -> Pydantic ResetSessionOut.
+
+    Only active tracks are surfaced to the wire: soft-deleted rows
+    (`removed_at IS NOT NULL`) stay in the DB for outcome-computation
+    purposes but are hidden from the frontend. The order_index is
+    kept as-is on the row; re-densification happens at delete time.
+    """
+    active_tracks = [t for t in session.tracks if t.removed_at is None]
+    return ResetSessionOut(
+        id=session.id,
+        user_id=session.user_id,
+        scope_dimensions=_coerce_scope_list(session.scope_dimensions_json or []),
+        free_text_intent=session.free_text_intent,
+        playlist_url=(
+            f"https://open.spotify.com/playlist/{session.spotify_playlist_id}"
+            if session.spotify_playlist_id else None
+        ),
+        trial_end_date=session.trial_end_date,
+        decision=session.decision,                                   # type: ignore[arg-type]
+        created_at=session.created_at,
+        tracks=[
+            ResetTrackOut(
+                spotify_track_id=t.spotify_track_id,
+                title=t.title,
+                artist=t.artist,
+                album=t.album,
+                why=t.llm_explanation,
+                order_index=t.order_index,
+            )
+            for t in sorted(active_tracks, key=lambda t: t.order_index)
+        ],
+    )
+
+
+# ============================================================
+# Endpoints
+# ============================================================
+
+@router.post("/sessions", response_model=ResetSessionOut)
+def create_reset_session(body: ResetSessionIn) -> ResetSessionOut:
+    """Begin a reset session.
+
+    Pipeline:
+      1. Validate user exists (created by /jobs/run-weekly-detection in mock mode).
+      2. Call reset_engine.generate_reset_playlist (filter -> Groq -> validate).
+      3. In mock mode: synthesize a playlist URL via create_playlist (no-op write).
+      4. Persist ResetSession + ResetTrack rows.
+      5. Return ResetSessionOut.
+    """
+    with db_session() as db:
+        user = db.get(User, body.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"user {body.user_id!r} not found. "
+                    f"Run POST /jobs/run-weekly-detection first to seed users."
+                ),
+            )
+
+        try:
+            tracks = generate_reset_playlist(
+                user_id=body.user_id,
+                scope_dimensions=list(body.scope_dimensions),
+                free_text_intent=body.free_text_intent,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=str(exc),
+            )
+        except Exception as exc:
+            log.exception("Reset playlist generation failed.")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Reset playlist generation failed: {exc}",
+            )
+
+        if not tracks:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "Groq returned 0 validated tracks. Likely all picks were "
+                    "hallucinated track_ids - check backend logs."
+                ),
+            )
+
+        # In real mode we need an access token to actually create the
+        # playlist on Spotify. Mock mode ignores access_token entirely.
+        access_token = _maybe_fresh_token(user)
+        try:
+            playlist = create_playlist(
+                user_id=body.user_id,
+                name=f"Reset Radar - {'/'.join(body.scope_dimensions)}",
+                description=(
+                    "Sandboxed " + str(settings.trial_window_days) + "-day reset trial. "
+                    "Keep or revert at the end."
+                ),
+                access_token=access_token,
+            )
+            add_tracks_to_playlist(
+                playlist_id=playlist["id"],
+                track_ids=[t["spotify_track_id"] for t in tracks],
+                access_token=access_token,
+            )
+        except SpotifyAuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Spotify auth failed during playlist write: {exc}",
+            )
+        except Exception as exc:                                       # noqa: BLE001
+            log.exception("Spotify playlist creation failed.")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Spotify playlist creation failed: {exc}",
+            )
+
+        # Capture before_stuck_score at session-creation time so the
+        # outcome screen can show before/after even after weeks pass.
+        latest_score = (
+            db.query(StuckScore)
+            .filter(StuckScore.user_id == body.user_id)
+            .order_by(desc(StuckScore.iso_week))
+            .first()
+        )
+        before_score = latest_score.overall if latest_score is not None else None
+
+        now = datetime.utcnow()
+        session_row = ResetSession(
+            id=str(uuid.uuid4()),
+            user_id=body.user_id,
+            nudge_id=None,
+            scope_dimensions_json=list(body.scope_dimensions),
+            free_text_intent=body.free_text_intent,
+            spotify_playlist_id=playlist["id"],
+            trial_end_date=now + timedelta(days=settings.trial_window_days),
+            before_stuck_score=before_score,
+            created_at=now,
+            # T26 (P5): `started_at` currently mirrors `created_at`.
+            # Open question §17.1 asks whether we should defer this
+            # until first playback; the answer will move here.
+            started_at=now,
+        )
+        db.add(session_row)
+
+        for track in tracks:
+            db.add(ResetTrack(
+                id=str(uuid.uuid4()),
+                reset_session_id=session_row.id,
+                spotify_track_id=track["spotify_track_id"],
+                title=track["title"],
+                artist=track["artist"],
+                album=track.get("album"),
+                genre=(track.get("genres") or [None])[0],
+                language=track.get("language"),
+                era=track.get("era"),
+                mood=track.get("mood"),
+                llm_score=track["score"],
+                llm_explanation=track["why"],
+                order_index=track["order_index"],
+            ))
+        db.commit()
+        db.refresh(session_row)
+        return _serialise_session(session_row)
+
+
+@router.get("/sessions/{session_id}", response_model=ResetSessionOut)
+def get_reset_session(session_id: str) -> ResetSessionOut:
+    """Fetch an existing reset session with its tracks."""
+    with db_session() as db:
+        session_row = db.get(ResetSession, session_id)
+        if session_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"reset session {session_id} not found",
+            )
+        return _serialise_session(session_row)
+
+
+@router.delete(
+    "/sessions/{session_id}/tracks/{track_id}",
+    response_model=ResetSessionOut,
+)
+def remove_track_from_reset(session_id: str, track_id: str) -> ResetSessionOut:
+    """Remove a single track from an active reset session (soft-delete).
+
+    Behaviour:
+      - 404 if the session does not exist.
+      - Soft-deletes the ResetTrack row keyed by
+        (reset_session_id, spotify_track_id) by setting `removed_at`
+        to now. If the track is already removed (or never existed),
+        we return 200 anyway (idempotent) so a double-tap of
+        "Remove from this reset" does not surface a confusing error.
+      - Re-densifies `order_index` on the *remaining active* tracks
+        so the frontend does not have to. Removed rows keep their
+        stale `order_index`; they are filtered out at serialisation.
+      - Real mode (P6) will additionally issue
+        `DELETE /playlists/{spotify_playlist_id}/tracks` against the
+        Spotify Web API with the single URI. Mock mode is a pure DB op.
+      - Returns the updated ResetSessionOut so the client can reconcile
+        against its optimistic state without a second fetch.
+
+    Soft-delete rationale: the outcome computation (P5 T28) needs to
+    know that a track was *offered* to the user even if they removed
+    it early - a rejection is a signal, not the absence of one.
+    """
+    with db_session() as db:
+        session_row = db.get(ResetSession, session_id)
+        if session_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"reset session {session_id} not found",
+            )
+
+        target = next(
+            (
+                t for t in session_row.tracks
+                if t.spotify_track_id == track_id and t.removed_at is None
+            ),
+            None,
+        )
+        if target is not None:
+            target.removed_at = datetime.utcnow()
+            db.flush()
+            active_remaining = sorted(
+                (t for t in session_row.tracks if t.removed_at is None),
+                key=lambda t: t.order_index,
+            )
+            for idx, t in enumerate(active_remaining):
+                t.order_index = idx
+            log.info(
+                "reset track soft-removed | session=%s track=%s remaining=%d",
+                session_id, track_id, len(active_remaining),
+            )
+        else:
+            log.info(
+                "reset track remove noop (idempotent) | session=%s track=%s",
+                session_id, track_id,
+            )
+
+        # TODO(P6-real): if not settings.mock_mode, also call
+        #   spotify_client.remove_tracks_from_playlist(...) here.
+
+        db.commit()
+        db.refresh(session_row)
+        return _serialise_session(session_row)
+
+
+@router.post("/sessions/{session_id}/decide", response_model=ResetOutcomeOut)
+def decide_reset_session(session_id: str, body: ResetDecisionIn) -> ResetOutcomeOut:
+    """Apply the Keep / Revert decision and return the outcome.
+
+    Behaviour by mode:
+
+      MOCK mode (default for the live demo):
+        - keep   -> save_to_library is a no-op log line
+        - revert -> delete_playlist is a no-op log line
+        - after_stuck_score is a heuristic projection (see below)
+
+      REAL mode (MOCK_MODE=false, after R4 OAuth + R5 writes):
+        - keep   -> follows EVERY unique artist on the reset playlist
+                    via PUT /me/following?type=artist (acceptance gate:
+                    "keep adds 5+ artists to followed list") AND saves
+                    every reset track via PUT /me/tracks
+        - revert -> DELETE /playlists/{id}/followers (canonical Spotify
+                    "delete a playlist" pattern - playlist disappears
+                    from the user's library)
+        - after_stuck_score retains the same heuristic projection in
+          this endpoint; the next weekly cron will overwrite it with
+          a measured value once a real post-reset snapshot exists.
+
+    after_stuck_score heuristic (honest framing):
+      keep   -> before_stuck_score * 0.6 (4-axis fan-out from 20 new
+                tracks all on the chosen dimension; rough linear estimate
+                that drops the rolling_overlap meaningfully and pushes
+                normalised entropy up about 1/3 of the way)
+      revert -> before_stuck_score        (no listening change)
+
+    The frontend renders this with an "approximation" label so the demo
+    is honest about the projection vs. measurement.
+    """
+    with db_session() as db:
+        session_row = db.get(ResetSession, session_id)
+        if session_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"reset session {session_id} not found",
+            )
+        if session_row.decision is not None:
+            # Already decided - return the existing decision snapshot
+            # instead of a 409. The Day-10 outcome page reloads on
+            # refresh; the frontend must not blow up just because the
+            # user tapped Keep twice.  If the caller is trying to CHANGE
+            # the decision (keep -> revert or vice-versa), that IS an
+            # error, so we still 409 that case.
+            if session_row.decision != body.decision:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"reset session {session_id} already decided "
+                        f"({session_row.decision!r}); cannot change to "
+                        f"{body.decision!r}"
+                    ),
+                )
+            log.info(
+                "decide re-served idempotently | session=%s decision=%s",
+                session_id, session_row.decision,
+            )
+            return ResetOutcomeOut(
+                session_id=session_row.id,
+                before_stuck_score=session_row.before_stuck_score,
+                after_stuck_score=session_row.after_stuck_score,
+                decision=session_row.decision,                              # type: ignore[arg-type]
+            )
+
+        # Need the User row for token refresh in real mode. Mock mode
+        # tolerates a missing user (the route auto-creates demo users in
+        # jobs.py but a stale DB might not have them).
+        user = db.get(User, session_row.user_id)
+        access_token = _maybe_fresh_token(user) if user is not None else None
+
+        track_ids = [t.spotify_track_id for t in session_row.tracks]
+
+        # T50 (P5): prefer the measured after-score when the outcome
+        # payload is available; fall back to the projection when it
+        # isn't. `_outcome_from_cache_or_source` is a read-through
+        # cache so this call is cheap on the second visit.
+        outcome_payload = _outcome_from_cache_or_source(db, session_row)
+        measured_after = _measured_after_score(outcome_payload)
+
+        try:
+            if body.decision == "keep":
+                # 1) Resolve artist IDs from the track IDs (1 batch call).
+                #    In mock mode this returns []; the follow-artists branch
+                #    below is a no-op.
+                artist_ids = resolve_artist_ids_for_tracks(
+                    track_ids=track_ids,
+                    access_token=access_token or "",
+                )
+                # 2) Follow the artists (the primary acceptance gate).
+                if artist_ids:
+                    save_to_library(
+                        item_type="artist",
+                        item_ids=artist_ids,
+                        access_token=access_token,
+                    )
+                # 3) Save the tracks too (so they survive in the user's
+                #    library after the playlist is gone).
+                save_to_library(
+                    item_type="track",
+                    item_ids=track_ids,
+                    access_token=access_token,
+                )
+                after_score = measured_after if measured_after is not None else (
+                    round(session_row.before_stuck_score * 0.6, 4)
+                    if session_row.before_stuck_score is not None else None
+                )
+            elif body.decision == "revert":
+                delete_playlist(
+                    playlist_id=session_row.spotify_playlist_id,
+                    access_token=access_token,
+                )
+                # Revert: the user chose NOT to keep the sandbox
+                # tracks. Their profile snaps back to pre-reset
+                # stuckness, so the measured after value doesn't
+                # apply here - keep the projection semantics.
+                after_score = session_row.before_stuck_score              # unchanged
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"unknown decision {body.decision!r}",
+                )
+        except HTTPException:
+            raise
+        except SpotifyAuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Spotify auth failed during decision write: {exc}",
+            )
+        except Exception as exc:                                       # noqa: BLE001
+            log.exception("Spotify decision write failed.")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Spotify decision write failed: {exc}",
+            )
+
+        session_row.decision = body.decision
+        session_row.after_stuck_score = after_score
+        session_row.decided_at = datetime.utcnow()
+        db.commit()
+        db.refresh(session_row)
+
+        return ResetOutcomeOut(
+            session_id=session_row.id,
+            before_stuck_score=session_row.before_stuck_score,
+            after_stuck_score=session_row.after_stuck_score,
+            decision=session_row.decision,                              # type: ignore[arg-type]
+        )
+
+
+# ============================================================
+# Mock-mode outcome fixture loader
+# ============================================================
+
+OUTCOMES_FIXTURE_PATH: Path = settings.mock_data_dir / "mock_outcomes.json"
+
+
+def _load_mock_outcomes() -> dict[str, dict[str, Any]]:
+    """Return `{user_id: outcome_row}` from mock_outcomes.json.
+
+    Empty dict if the file is missing so the endpoint 404s cleanly for
+    users without a fixture entry (e.g. Riya, who never has a session).
+    """
+    if not OUTCOMES_FIXTURE_PATH.exists():
+        return {}
+    data = json.loads(OUTCOMES_FIXTURE_PATH.read_text(encoding="utf-8"))
+    return data.get("outcomes", {})
+
+
+def _compute_outcome_payload(session_row: ResetSession) -> dict[str, Any]:
+    """Return the raw outcome dict (pre-Pydantic) for a session.
+
+    Mock mode: reads `mock_outcomes.json` keyed by `session.user_id`.
+    Real mode: `TODO(P6)` - computes from `sandbox_play_events` +
+    `WeeklySnapshot` before/after deltas. Until that lands, real
+    mode raises `LookupError` so the caller returns 404.
+
+    Raises `LookupError` when no source of truth exists yet for this
+    session (e.g. Riya, or a real-mode session before the trial ends).
+    """
+    if not settings.mock_mode:
+        # TODO(P6-real): compute the payload from sandbox_play_events
+        # + snapshot deltas + persisted before_snapshot_id /
+        # after_snapshot_id. See implementationPlan.md T28 real-mode
+        # branch.
+        raise LookupError("real-mode outcome computation not yet wired")
+
+    outcomes = _load_mock_outcomes()
+    fixture = outcomes.get(session_row.user_id)
+    if fixture is None:
+        raise LookupError(
+            f"no outcome fixture for user {session_row.user_id!r}"
+        )
+    return fixture
+
+
+def _outcome_from_cache_or_source(
+    db, session_row: ResetSession,
+) -> dict[str, Any] | None:
+    """Return the cached outcome dict or recompute + cache it.
+
+    First call:  compute from source, write to `session_row.outcome_json`,
+                 commit, return.
+    Later calls: return the cached dict directly.
+
+    Returns None if no source exists (Riya, or real mode pre-trial-end).
+    Never raises - lookup failures collapse to None so the caller can
+    decide whether to 404 or fall back.
+    """
+    cached = session_row.outcome_json
+    if cached:
+        return cached
+    try:
+        payload = _compute_outcome_payload(session_row)
+    except LookupError:
+        return None
+    session_row.outcome_json = payload
+    db.commit()
+    return payload
+
+
+@router.get(
+    "/sessions/{session_id}/outcome",
+    response_model=ResetOutcomeDetailOut,
+)
+def get_reset_outcome(session_id: str) -> ResetOutcomeDetailOut:
+    """Return the rich Day-N outcome payload for screen 4.
+
+    Behaviour by mode:
+      MOCK mode:
+        Loads `mock_outcomes.json` keyed by `session.user_id` and
+        caches the payload into `ResetSession.outcome_json` on the
+        first call so subsequent reads are stable (even if the
+        fixture is edited mid-demo). Idempotent - safe on refresh.
+
+      REAL mode (P6):
+        `TODO(P6-real)` - compute from `sandbox_play_events` +
+        `WeeklySnapshot` deltas; cache into `session.outcome_json`
+        with a 15-min TTL. See implementationPlan.md T28.
+
+    Returns 404 if:
+      - the session does not exist
+      - mock mode is on but there is no fixture entry for the user
+        (this is the correct answer for Riya, who is ineligible and
+        should never reach this endpoint anyway)
+    """
+    with db_session() as db:
+        session_row = db.get(ResetSession, session_id)
+        if session_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"reset session {session_id} not found",
+            )
+        payload = _outcome_from_cache_or_source(db, session_row)
+        if payload is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"no outcome for session {session_id}. In mock mode add "
+                    f"an entry to backend/mock_data/mock_outcomes.json; in "
+                    f"real mode wait until trial_end_date + 1 week for the "
+                    f"after-snapshot to land."
+                ),
+            )
+
+        # Round-trip through the typed sub-models so a bad fixture edit
+        # fails loudly at request time rather than confusing the frontend.
+        return ResetOutcomeDetailOut(
+            session_id=session_row.id,
+            user_id=session_row.user_id,
+            day_index=payload["day_index"],
+            collapsed_dimension=payload["collapsed_dimension"],
+            decision=session_row.decision,                                  # type: ignore[arg-type]
+            tracks_played_count=OutcomeTracksPlayed(**payload["tracks_played_count"]),
+            repeat_plays=[OutcomeRepeatPlay(**r) for r in payload.get("repeat_plays", [])],
+            artist_search_hits=[
+                OutcomeArtistHit(**a) for a in payload.get("artist_search_hits", [])
+            ],
+            before_language_pct=payload.get("before_language_pct"),
+            after_language_pct=payload.get("after_language_pct"),
+            before_genre_pct=payload.get("before_genre_pct"),
+            after_genre_pct=payload.get("after_genre_pct"),
+            diversity_delta_pts=payload["diversity_delta_pts"],
+            narrative_before=payload["narrative_before"],
+            narrative_after=payload["narrative_after"],
+        )
+
+
+# ============================================================
+# T50 - measured after_stuck_score helper
+# ============================================================
+#
+# When `outcome_json` is populated (mock mode fixture or real-mode
+# compute), we prefer the *measured* dominance on the collapsed
+# dimension as `after_stuck_score` instead of the `before * 0.6`
+# projection.
+#
+# Semantic note: `after_language_pct` / `after_genre_pct` are DIVERSITY
+# scores in [0, 1] where higher = more diverse (i.e. LESS stuck). The
+# per-axis stuckness is therefore `1 - diversity_pct`. Karthik's
+# fixture shows `after_language_pct=0.50`, so the measured axis
+# stuckness is `1 - 0.50 = 0.50` - close to but not identical to the
+# `0.82 * 0.6 = 0.492` projection.
+
+def _measured_after_score(outcome_payload: dict[str, Any] | None) -> float | None:
+    """Extract a measured after_stuck_score from an outcome payload.
+
+    Returns None when there's no measured value to use; the caller
+    should fall back to the projection in that case.
+    """
+    if not outcome_payload:
+        return None
+    dim = outcome_payload.get("collapsed_dimension")
+    key = {
+        "language": "after_language_pct",
+        "genre":    "after_genre_pct",
+        # Era and mood outcomes aren't authored yet; a future fixture
+        # can add `after_era_pct` / `after_mood_pct` and land the
+        # keys here without touching the endpoint.
+    }.get(dim)
+    if key is None:
+        return None
+    value = outcome_payload.get(key)
+    if value is None:
+        return None
+    try:
+        val_f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= val_f <= 1.0:
+        return None
+    return round(1.0 - val_f, 4)
+
+
+# ============================================================
+# Token-refresh helper used by both write paths
+# ============================================================
+
+def _maybe_fresh_token(user: User | None) -> str | None:
+    """Return a fresh access_token, or None in mock mode / no-auth user.
+
+    Mock mode never needs the token (writes are no-ops); a user with no
+    access_token (e.g. the synthetic demo personas) also yields None,
+    in which case the downstream write functions are mock-mode no-ops.
+    Only real-mode authenticated users go through `_ensure_fresh_token`
+    and may have their refresh_token rotated as a side effect.
+    """
+    if settings.mock_mode:
+        return None
+    if user is None or not user.access_token:
+        return None
+    return _ensure_fresh_token(user)
+
+
+__all__ = ["router"]

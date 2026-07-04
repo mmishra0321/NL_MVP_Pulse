@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pulse — Screen 1</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a0a; display:flex; justify-content:center; align-items:center; min-height:100vh; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; padding:40px; }
+.phone { width:375px; height:812px; background:#000; border-radius:44px; overflow:hidden; border:8px solid #1c1c1e; box-shadow:0 40px 80px rgba(0,0,0,0.8); display:flex; flex-direction:column; }
+.content { flex:1; overflow:hidden; }
+.status-bar { padding:16px 24px 0; display:flex; justify-content:space-between; align-items:center; }
+.time { color:#fff; font-size:15px; font-weight:600; }
+.status-icons { display:flex; gap:6px; align-items:center; }
+.top-row { padding:12px 18px 8px; display:flex; align-items:center; gap:12px; }
+.avatar-wrap { position:relative; flex-shrink:0; }
+.avatar { width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#ff6b35,#e8a020); display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; font-weight:700; }
+.badge { position:absolute; top:-4px; right:-4px; background:#1DB954; border-radius:50%; width:17px; height:17px; display:flex; align-items:center; justify-content:center; color:#000; font-size:9px; font-weight:800; border:2px solid #000; }
+.pills { display:flex; gap:8px; }
+.pill { padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600; }
+.pill.active { background:#1DB954; color:#000; font-weight:700; }
+.pill.inactive { background:#2A2A2A; color:#fff; }
+.section { padding:6px 18px 0; }
+.section-title { color:#fff; font-size:18px; font-weight:700; margin-bottom:12px; }
+.albums-row { display:flex; gap:12px; overflow:hidden; }
+.album { flex-shrink:0; width:105px; }
+.album-art { width:105px; height:105px; border-radius:6px; display:flex; align-items:center; justify-content:center; }
+.album-art span { color:rgba(255,255,255,0.12); font-size:30px; font-weight:900; }
+.album-title { color:#fff; font-size:12px; font-weight:700; margin:6px 0 2px; line-height:1.2; }
+.album-artist { color:#B3B3B3; font-size:11px; }
+.pulse-card { margin:14px 18px 0; background:#181818; border-radius:12px; padding:16px; border-left:3px solid #444; }
+.pulse-label { display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+.green-dot { width:8px; height:8px; border-radius:50%; background:#1DB954; }
+.pulse-brand { color:#1DB954; font-size:10px; font-weight:800; letter-spacing:1.2px; }
+.pulse-title { color:#fff; font-size:15px; font-weight:700; margin-bottom:5px; line-height:1.3; }
+.pulse-sub { color:#B3B3B3; font-size:13px; margin-bottom:12px; line-height:1.4; }
+.pulse-btns { display:flex; align-items:center; gap:14px; }
+.btn-primary { background:#1DB954; color:#000; border:none; padding:9px 18px; border-radius:20px; font-size:13px; font-weight:800; }
+.btn-secondary { color:#B3B3B3; font-size:13px; background:none; border:none; }
+.dismiss-pill { margin:8px 18px 0; background:#1a1a1a; border-radius:20px; padding:7px 14px; display:flex; align-items:center; justify-content:space-between; }
+.made-for { padding:18px 18px 0; }
+.discover-art { width:110px; height:110px; border-radius:6px; background:linear-gradient(135deg,#0f3460,#5c1a8a); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+.discover-art span { color:#fff; font-size:10px; font-weight:700; letter-spacing:.5px; }
+.discover-sub { color:#B3B3B3; font-size:10px; margin-top:6px; line-height:1.3; width:110px; }
+.radio-section { padding:18px 18px 0; }
+.radio-row { display:flex; gap:12px; }
+.radio-tile { width:110px; height:74px; border-radius:6px; display:flex; align-items:flex-start; justify-content:flex-end; padding:6px; }
+.radio-badge { background:rgba(0,0,0,0.55); color:#fff; font-size:8px; font-weight:700; padding:2px 5px; border-radius:3px; }
+.coach-mark { margin:18px 12px 0; background:#181818; border-radius:10px; padding:11px 14px; border:1px solid #333; position:relative; }
+.coach-arrow { position:absolute; top:-7px; left:44px; width:12px; height:12px; background:#181818; border-top:1px solid #333; border-left:1px solid #333; transform:rotate(45deg); }
+.coach-text { color:#fff; font-size:10px; line-height:1.5; margin-bottom:4px; }
+.coach-close { color:#B3B3B3; font-size:10px; }
+.bottom-nav { background:#000; padding:12px 0 10px; display:flex; justify-content:space-around; align-items:center; border-top:0.5px solid #1a1a1a; flex-shrink:0; }
+.nav-item { display:flex; flex-direction:column; align-items:center; gap:3px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="content">
+    <div class="status-bar">
+      <span class="time">9:41</span>
+      <div class="status-icons">
+        <svg width="17" height="12" viewBox="0 0 16 11" fill="white"><rect x="0" y="4" width="3" height="7" rx="1"/><rect x="4.5" y="2.5" width="3" height="8.5" rx="1"/><rect x="9" y="0" width="3" height="11" rx="1"/><rect x="13.5" y="0" width="2.5" height="11" rx="1" opacity="0.3"/></svg>
+        <svg width="16" height="12" viewBox="0 0 15 11" fill="white"><path d="M7.5 2.2C5 2.2 2.8 3.2 1.2 4.9L0 3.7C2 1.4 4.6 0 7.5 0s5.5 1.4 7.5 3.7l-1.2 1.2C12.2 3.2 10 2.2 7.5 2.2z"/><path d="M7.5 5.5c-1.5 0-2.9.6-3.9 1.6L2.4 5.9C3.7 4.6 5.5 3.8 7.5 3.8s3.8.8 5.1 2.1l-1.2 1.2C10.4 6.1 9 5.5 7.5 5.5z"/><circle cx="7.5" cy="9.5" r="1.5"/></svg>
+        <svg width="26" height="13" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3.5" stroke="white" stroke-opacity="0.35"/><rect x="1" y="1" width="15" height="10" rx="3" fill="white"/><path d="M22 4v4a2 2 0 000-4z" fill="white" opacity="0.4"/></svg>
+      </div>
+    </div>
+    <div class="top-row">
+      <div class="avatar-wrap"><div class="avatar">P</div><div class="badge">3</div></div>
+      <div class="pills">
+        <span class="pill active">All</span>
+        <span class="pill inactive">Music</span>
+        <span class="pill inactive">Podcasts</span>
+      </div>
+    </div>
+    <div class="section">
+      <p class="section-title">Popular albums</p>
+      <div class="albums-row">
+        <div class="album"><div class="album-art" style="background:linear-gradient(135deg,#8B0000,#cc3300)"><span>A</span></div><p class="album-title">Aashiqui 2</p><p class="album-artist">Mithoon</p></div>
+        <div class="album"><div class="album-art" style="background:linear-gradient(135deg,#1a3a6b,#2d6abf)"><span>S</span></div><p class="album-title">Sanam Teri</p><p class="album-artist">Himesh R.</p></div>
+        <div class="album"><div class="album-art" style="background:linear-gradient(135deg,#2d4a1e,#4a8a2e)"><span>F</span></div><p class="album-title">Finding You</p><p class="album-artist">Kushagra</p></div>
+      </div>
+    </div>
+    <div class="pulse-card">
+      <div class="pulse-label"><div class="green-dot"></div><span class="pulse-brand">PULSE</span></div>
+      <p class="pulse-title">91% of your plays have been Telugu for 3 weeks.</p>
+      <p class="pulse-sub">Want a small reset outside your library?</p>
+      <div class="pulse-btns"><button class="btn-primary">Try a reset</button><button class="btn-secondary">Not now</button></div>
+    </div>
+    <div class="dismiss-pill">
+      <span style="color:#777;font-size:11px;display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:#555;display:inline-block"></span>Reset available · check back next Monday</span>
+      <span style="color:#555;font-size:11px">×</span>
+    </div>
+    <div class="made-for">
+      <p class="section-title">Made For You</p>
+      <div><div class="discover-art"><span>DISCOVER</span><span>WEEKLY</span></div><p class="discover-sub">Hidden gems and deep cuts</p></div>
+    </div>
+    <div class="radio-section">
+      <p class="section-title">Popular radio</p>
+      <div class="radio-row">
+        <div class="radio-tile" style="background:linear-gradient(135deg,#5a2d82,#9b4dca)"><span class="radio-badge">RADIO</span></div>
+        <div class="radio-tile" style="background:linear-gradient(135deg,#8B4513,#cd853f)"><span class="radio-badge">RADIO</span></div>
+      </div>
+    </div>
+    <div class="coach-mark">
+      <div class="coach-arrow"></div>
+      <p class="coach-text"><span style="color:#1DB954;font-weight:700">Pulse</span> notices when you get stuck on one thing for 3 weeks. It never touches your existing library.</p>
+      <span class="coach-close">Got it</span>
+    </div>
+  </div>
+  <div class="bottom-nav">
+    <div class="nav-item"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg><span style="color:#1DB954;font-size:9px">Home</span></div>
+    <div class="nav-item"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span style="color:#B3B3B3;font-size:9px">Search</span></div>
+    <div class="nav-item"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><span style="color:#B3B3B3;font-size:9px">Library</span></div>
+    <div class="nav-item"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg><span style="color:#B3B3B3;font-size:9px">Premium</span></div>
+    <div class="nav-item"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B3B3B3" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="color:#B3B3B3;font-size:9px">Create</span></div>
+  </div>
+</div>
+</body>
+</html>

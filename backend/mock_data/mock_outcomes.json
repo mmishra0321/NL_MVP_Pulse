@@ -1,0 +1,41 @@
+{
+  "_schema_version": 1,
+  "_purpose": "Screen-4 (Keep or Revert, Day N) numbers per persona. Read by GET /reset-sessions/{id}/outcome in mock mode. Real-mode computation uses recently-played + top-artists deltas; see architecture.md §4.3-4.4. Riya is intentionally absent \u2014 she is ineligible for Pulse and therefore never has a session to compute an outcome for.",
+  "outcomes": {
+    "demo-karthik-001": {
+      "day_index": 10,
+      "collapsed_dimension": "language",
+      "tracks_played_count": { "played": 14, "total": 20 },
+      "repeat_plays": [
+        { "spotify_track_id": "reset-karthik-lang-t004", "title": "Munbe Vaa",     "artist": "A.R. Rahman",       "plays": 6 },
+        { "spotify_track_id": "reset-karthik-lang-t009", "title": "Vaathi Coming", "artist": "Anirudh Ravichander", "plays": 5 },
+        { "spotify_track_id": "reset-karthik-lang-t013", "title": "Yeh Honsla",    "artist": "Instrumental",      "plays": 3 }
+      ],
+      "artist_search_hits": [
+        { "artist": "A.R. Rahman", "source": "search_history_proxy" }
+      ],
+      "before_language_pct": 0.19,
+      "after_language_pct": 0.50,
+      "diversity_delta_pts": 31,
+      "narrative_before": "Language mix was 81% Telugu \u2014 the axis had visibly collapsed.",
+      "narrative_after":  "Language mix now spans Tamil, Malayalam, Hindi and Telugu at close to even weights."
+    },
+    "demo-aanya-002": {
+      "day_index": 10,
+      "collapsed_dimension": "genre",
+      "tracks_played_count": { "played": 12, "total": 20 },
+      "repeat_plays": [
+        { "spotify_track_id": "reset-aanya-genre-t002", "title": "Wildflower",       "artist": "Billie Eilish",     "plays": 5 },
+        { "spotify_track_id": "reset-aanya-genre-t006", "title": "After Dark",       "artist": "Mr.Kitty",          "plays": 4 }
+      ],
+      "artist_search_hits": [
+        { "artist": "Kali Uchis", "source": "search_history_proxy" }
+      ],
+      "before_genre_pct": 0.22,
+      "after_genre_pct": 0.54,
+      "diversity_delta_pts": 32,
+      "narrative_before": "Genre mix was 78% dream-pop / bedroom-indie \u2014 five sub-genres shrunk to two.",
+      "narrative_after":  "Genre mix now spans darkwave, alt-R&B, indie-folk and hyperpop alongside her existing lane."
+    }
+  }
+}
